@@ -1,0 +1,56 @@
+version: '3.8'
+
+services:
+  # 1. Banco de Dados PostgreSQL
+  postgres:
+    image: postgres:16-alpine
+    container_name: challenge_postgres
+    environment:
+      POSTGRES_USER: challenge
+      POSTGRES_PASSWORD: challenge_secret
+      POSTGRES_DB: wagering_db
+    ports:
+      - '5433:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U challenge -d wagering_db']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # 2. Emulador AWS (SQS) - LocalStack
+  localstack:
+    image: localstack/localstack:latest
+    container_name: challenge_localstack
+    ports:
+      - '4566:4566'
+    environment:
+      - SERVICES=sqs
+      - AWS_DEFAULT_REGION=us-east-1
+    volumes:
+      - ./infra/localstack/init-aws.sh:/etc/localstack/init/ready.d/init-aws.sh # script para criar as filas automaticamente
+
+  # 3. Aplicação (NestJS / Bun)
+  app:
+    build:
+      context: ./backend-challenge
+      dockerfile: Dockerfile
+    container_name: challenge_app
+    ports:
+      - '3000:3000'
+    environment:
+      - PORT=3000
+      - DATABASE_URL=postgresql://challenge:challenge_secret@postgres:5432/wagering_db
+      - AWS_ENDPOINT=http://localstack:4566
+      - AWS_REGION=us-east-1
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+    depends_on:
+      postgres:
+        condition: service_healthy
+      localstack:
+        condition: service_started
+
+volumes:
+  pgdata:
