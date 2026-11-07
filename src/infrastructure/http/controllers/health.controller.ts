@@ -6,12 +6,14 @@ import {
   HealthIndicatorResult,
 } from '@nestjs/terminus';
 import { EntityManager } from '@mikro-orm/postgresql';
+import { SqsService } from '../../messaging/sqs/sqs.service.js';
 
 @Controller('health')
 export class HealthController {
   constructor(
     private readonly health: HealthCheckService,
     private readonly em: EntityManager,
+    private readonly sqsService: SqsService,
   ) {}
 
   /**
@@ -65,10 +67,10 @@ export class HealthController {
   }
 
   private async checkSqs(): Promise<HealthIndicatorResult> {
-    // Por enquanto retorna UP (ou configurado quando ativarmos o client SQS no passo 3)
+    const isHealthy = await this.sqsService.checkHealth();
     return {
       sqs: {
-        status: 'up',
+        status: isHealthy ? 'up' : 'down',
       },
     };
   }

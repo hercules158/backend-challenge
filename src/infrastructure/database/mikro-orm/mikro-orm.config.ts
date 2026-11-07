@@ -9,6 +9,7 @@ import { OutboxMessageOrmEntity } from './entities/outbox-message.orm-entity.js'
 export default defineConfig({
   driver: PostgreSqlDriver,
   clientUrl: process.env.DATABASE_URL || 'postgresql://challenge:challenge_secret@localhost:5433/wagering_db',
+  allowGlobalContext: true,
   entities: [
     WalletOrmEntity,
     LedgerEntryOrmEntity,

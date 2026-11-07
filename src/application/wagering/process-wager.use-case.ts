@@ -22,6 +22,16 @@ import { WalletOrmEntity } from '../../infrastructure/database/mikro-orm/entitie
 import { WalletLedgerEntry } from '../../domain/ledger/wallet-ledger-entry.js';
 import { LedgerEntryOrmEntity } from '../../infrastructure/database/mikro-orm/entities/ledger-entry.orm-entity.js';
 import { WagerTransactionOrmEntity } from '../../infrastructure/database/mikro-orm/entities/wager-transaction.orm-entity.js';
+import { OutboxMessageOrmEntity } from '../../infrastructure/database/mikro-orm/entities/outbox-message.orm-entity.js';
+import { InboxMessageOrmEntity } from '../../infrastructure/database/mikro-orm/entities/inbox-message.orm-entity.js';
+import {
+  IntegrationEvent,
+  WagerTransactionProcessed,
+  WagerTransactionRejected,
+  WalletBalanceChanged,
+  WagerTransactionPendingReference,
+} from '../../domain/events/integration-event.js';
+import { OutboxMessage } from '../../domain/outbox/outbox-message.js';
 
 // ─── DTOs ─────────────────────────────────────────────────────
 
@@ -36,6 +46,10 @@ export interface ProcessWagerInput {
   kind: WagerTransactionKind;
   money: MoneyProps;
   referenceExternalTransactionId?: string;
+  correlationId?: string;
+  causationId?: string;
+  inboxMessageId?: string;
+  consumerName?: string;
 }
 
 export interface ProcessWagerOutput {
@@ -100,6 +114,7 @@ export class ProcessWagerUseCase {
 
   async execute(input: ProcessWagerInput): Promise<ProcessWagerOutput> {
     const payloadHash = this.computePayloadHash(input);
+    const correlationId = input.correlationId || randomUUID();
 
     // 1. Verificação prévia de Idempotência
     const existing = await this.wagerRepo.findByIdempotencyKey(input.idempotencyKey);
@@ -122,10 +137,21 @@ export class ProcessWagerUseCase {
     const money = Money.from(input.money);
     const transactionId = randomUUID();
 
-    // 2. Transação SQL Atômica com Lock Pessimista na Wallet
-    return await this.em.transactional(async (em) => {
+    // 2. Transação SQL Atômica: Wallet + Transação + Ledger + Outbox (+ Inbox se mensagem SQS)
+    return await this.em.fork().transactional(async (em) => {
+      // Se veio via consumidor de mensageria, registra a mensagem no Inbox
+      if (input.inboxMessageId && input.consumerName) {
+        const inboxEntity = em.create(InboxMessageOrmEntity, {
+          id: randomUUID(),
+          messageId: input.inboxMessageId,
+          consumerName: input.consumerName,
+          payloadHash,
+          receivedAt: new Date(),
+          processedAt: new Date(),
+        });
+        em.persist(inboxEntity);
+      }
       // Busca a wallet com LockMode.PESSIMISTIC_WRITE (SELECT ... FOR UPDATE)
-      // garantindo que nenhuma outra instância altere o saldo ao mesmo tempo
       const walletOrm = await em.findOne(
         WalletOrmEntity,
         { id: input.walletId },
@@ -146,7 +172,6 @@ export class ProcessWagerUseCase {
         updatedAt: walletOrm.updatedAt,
       });
 
-      // Cria a entidade de WagerTransaction em memória
       const transaction = WagerTransaction.create({
         id: transactionId,
         providerId: input.providerId,
@@ -172,11 +197,31 @@ export class ProcessWagerUseCase {
         });
 
         if (!referenceTx) {
-          // Referência ainda não existe (fora de ordem)
+          // Referência ainda ausente -> PENDING_REFERENCE
           transaction.markPendingReference();
 
           const txOrm = em.create(WagerTransactionOrmEntity, this.toOrmProps(transaction));
           em.persist(txOrm);
+
+          // Outbox Event: WagerTransactionPendingReference
+          this.enqueueOutboxEvent(
+            em,
+            new WagerTransactionPendingReference({
+              eventId: randomUUID(),
+              aggregateId: transaction.id,
+              correlationId,
+              causationId: input.causationId,
+              occurredAt: new Date(),
+              data: {
+                transactionId: transaction.id,
+                providerId: transaction.providerId,
+                externalTransactionId: transaction.externalTransactionId,
+                referenceExternalTransactionId: input.referenceExternalTransactionId!,
+                walletId: wallet.id,
+                kind: transaction.kind,
+              },
+            }),
+          );
 
           return {
             transactionId: transaction.id,
@@ -199,23 +244,21 @@ export class ProcessWagerUseCase {
         ) {
           balanceChange = wallet.credit(money);
         } else if (input.kind === WagerTransactionKind.Rollback) {
-          // Rollback: inverte o efeito contábil da transação referenciada
           if (referenceTx!.kind === WagerTransactionKind.Bet) {
             balanceChange = wallet.credit(money);
           } else if (referenceTx!.kind === WagerTransactionKind.Win) {
             balanceChange = wallet.debit(money);
           }
         }
-        // Nota: LOSS não afeta saldo (affectsBalance = false)
 
         transaction.markProcessed(referenceTx?.id, new Date());
 
-        // Atualiza a Wallet no banco
+        // Atualiza a Wallet
         walletOrm.balanceAmount = wallet.balance.toString();
         walletOrm.version = wallet.version;
         walletOrm.updatedAt = wallet.updatedAt;
 
-        // Se moveu saldo, gera o lançamento contábil no Ledger
+        // Se moveu saldo, gera o lançamento no Ledger e o evento WalletBalanceChanged
         if (balanceChange) {
           const ledgerEntry = WalletLedgerEntry.create({
             id: randomUUID(),
@@ -246,10 +289,55 @@ export class ProcessWagerUseCase {
             createdAt: ledgerEntry.createdAt,
           });
           em.persist(ledgerOrm);
+
+          // Outbox Event: WalletBalanceChanged (somente quando saldo muda)
+          this.enqueueOutboxEvent(
+            em,
+            new WalletBalanceChanged({
+              eventId: randomUUID(),
+              aggregateId: wallet.id,
+              correlationId,
+              causationId: input.causationId,
+              occurredAt: new Date(),
+              data: {
+                walletId: wallet.id,
+                transactionId: transaction.id,
+                direction: ledgerEntry.direction,
+                money: ledgerEntry.money.toJSON(),
+                balanceBefore: balanceChange.balanceBefore.toJSON(),
+                balanceAfter: balanceChange.balanceAfter.toJSON(),
+                walletVersion: wallet.version,
+              },
+            }),
+          );
         }
 
         const txOrm = em.create(WagerTransactionOrmEntity, this.toOrmProps(transaction));
         em.persist(txOrm);
+
+        // Outbox Event: WagerTransactionProcessed (inclusive para LOSS)
+        this.enqueueOutboxEvent(
+          em,
+          new WagerTransactionProcessed({
+            eventId: randomUUID(),
+            aggregateId: transaction.id,
+            correlationId,
+            causationId: input.causationId,
+            occurredAt: new Date(),
+            data: {
+              transactionId: transaction.id,
+              providerId: transaction.providerId,
+              externalTransactionId: transaction.externalTransactionId,
+              walletId: wallet.id,
+              playerId: transaction.playerId,
+              roundId: transaction.roundId,
+              gameId: transaction.gameId,
+              kind: transaction.kind,
+              money: transaction.money.toJSON(),
+              referenceTransactionId: transaction.referenceTransactionId,
+            },
+          }),
+        );
 
         return {
           transactionId: transaction.id,
@@ -258,12 +346,36 @@ export class ProcessWagerUseCase {
           idempotentReplay: false,
         };
       } catch (err: any) {
-        // Se a regra de saldo falhar (ex: saldo insuficiente)
+        // Se violar regra de saldo (ex: InsufficientFundsError)
         if (err.name === 'InsufficientFundsError') {
           transaction.reject(FailureCode.InsufficientFunds);
 
           const txOrm = em.create(WagerTransactionOrmEntity, this.toOrmProps(transaction));
           em.persist(txOrm);
+
+          // Outbox Event: WagerTransactionRejected
+          this.enqueueOutboxEvent(
+            em,
+            new WagerTransactionRejected({
+              eventId: randomUUID(),
+              aggregateId: transaction.id,
+              correlationId,
+              causationId: input.causationId,
+              occurredAt: new Date(),
+              data: {
+                transactionId: transaction.id,
+                providerId: transaction.providerId,
+                externalTransactionId: transaction.externalTransactionId,
+                walletId: wallet.id,
+                playerId: transaction.playerId,
+                roundId: transaction.roundId,
+                gameId: transaction.gameId,
+                kind: transaction.kind,
+                money: transaction.money.toJSON(),
+                failureCode: FailureCode.InsufficientFunds,
+              },
+            }),
+          );
 
           return {
             transactionId: transaction.id,
@@ -276,6 +388,21 @@ export class ProcessWagerUseCase {
         throw err;
       }
     });
+  }
+
+  private enqueueOutboxEvent(em: EntityManager, event: IntegrationEvent<unknown>): void {
+    const outboxMessage = OutboxMessage.enqueue(event);
+    const entity = em.create(OutboxMessageOrmEntity, {
+      id: outboxMessage.id,
+      aggregateId: outboxMessage.aggregateId,
+      eventType: outboxMessage.eventType,
+      payload: outboxMessage.payload,
+      occurredAt: outboxMessage.occurredAt,
+      attempts: outboxMessage.attempts,
+      nextAttemptAt: outboxMessage.nextAttemptAt,
+      publishedAt: outboxMessage.publishedAt,
+    });
+    em.persist(entity);
   }
 
   private toOrmProps(tx: WagerTransaction) {

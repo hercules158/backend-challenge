@@ -19,9 +19,9 @@ services:
       timeout: 5s
       retries: 5
 
-  # 2. Emulador AWS (SQS) - LocalStack
+  # 2. Emulador AWS (SQS) - LocalStack Community
   localstack:
-    image: localstack/localstack:latest
+    image: localstack/localstack:3.0
     container_name: challenge_localstack
     ports:
       - '4566:4566'
