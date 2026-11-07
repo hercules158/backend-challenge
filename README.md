@@ -63,7 +63,7 @@ bun run migration:down
 
 ---
 
-## 🏃‍♂️ Executando a Aplicação
+## Executando a Aplicação
 
 ### Modo Desenvolvimento (Watch mode)
 ```bash
