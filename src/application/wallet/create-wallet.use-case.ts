@@ -2,6 +2,7 @@ import { Wallet } from '../../domain/wallet/wallet.js';
 import { Money, MoneyProps } from '../../domain/shared/money.js';
 import { WalletLedgerEntry, LedgerDirection } from '../../domain/ledger/wallet-ledger-entry.js';
 import { randomUUID } from 'node:crypto';
+import { ILedgerRepository } from '../../domain/ledger/ledger.repository.interface.js';
 
 // ─── DTOs do Caso de Uso ──────────────────────────────────────
 
@@ -18,7 +19,11 @@ export interface CreateWalletOutput {
 }
 
 export class WalletAlreadyExistsError extends Error {
-  constructor(playerId: string, currency: string) {
+  constructor(
+    public readonly playerId: string,
+    public readonly currency: string,
+    public readonly existingWalletId: string, // <-- adicione aqui
+  ) {
     super(`Wallet already exists for player ${playerId} with currency ${currency}`);
     this.name = 'WalletAlreadyExistsError';
   }
@@ -32,10 +37,6 @@ export interface IWalletRepository {
   save(wallet: Wallet): Promise<void>;
 }
 
-export interface ILedgerRepository {
-  save(entry: WalletLedgerEntry): Promise<void>;
-}
-
 // ─── O SERVICE / CASO DE USO ──────────────────────────────────
 
 export class CreateWalletUseCase {
@@ -47,14 +48,14 @@ export class CreateWalletUseCase {
   async execute(input: CreateWalletInput): Promise<CreateWalletOutput> {
     const initialMoney = Money.from(input.initialBalance);
 
-    // 1. Invariante: No máximo uma wallet por playerId + currency (README Seção 6.2 e 9)
+    // 1. Invariante: No máximo uma wallet por playerId + currency
     const existing = await this.walletRepository.findByPlayerIdAndCurrency(
       input.playerId,
       initialMoney.currency,
     );
 
     if (existing) {
-      throw new WalletAlreadyExistsError(input.playerId, initialMoney.currency);
+        throw new WalletAlreadyExistsError(input.playerId, initialMoney.currency, existing.id);
     }
 
     // 2. Cria a nova Wallet no Domínio
