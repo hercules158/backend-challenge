@@ -6,7 +6,7 @@ Seguindo os padrões de **Domain-Driven Design (DDD)** e **Arquitetura Hexagonal
 
 ---
 
-## 🚀 Requisitos e Pré-requisitos
+##  Requisitos e Pré-requisitos
 
 - [Bun](https://bun.sh/) 1.1 ou superior (Runtime, package manager e test runner oficial)
 - [Docker](https://www.docker.com/) e Docker Compose
@@ -16,7 +16,7 @@ Seguindo os padrões de **Domain-Driven Design (DDD)** e **Arquitetura Hexagonal
 
 ---
 
-## ⚙️ Setup do Ambiente e Dependências
+##  Setup do Ambiente e Dependências
 
 ### 1. Instalação das dependências
 
@@ -88,7 +88,7 @@ docker compose up -d --build
 
 ---
 
-## 🧪 Executando os Testes
+##  Executando os Testes
 
 O projeto conta com cobertura completa usando **`bun:test`**, abrangendo testes unitários de domínio e testes de integração/concorrência com banco e mensageria reais.
 
@@ -108,7 +108,7 @@ bun run test:watch
 
 ---
 
-## 📡 Endpoints da API HTTP
+##  Endpoints da API HTTP
 
 ### 1. Health Checks (Liveness & Readiness)
 - `GET /health/live` — Verifica se o processo está vivo.
@@ -146,7 +146,7 @@ bun run test:watch
 
 ---
 
-## 📨 Processamento Assíncrono via SQS
+##  Processamento Assíncrono via SQS
 
 A aplicação também consome operações via SQS FIFO (`wager-transactions.fifo`) reutilizando o mesmo caso de uso:
 
@@ -176,7 +176,7 @@ O consumidor assegura:
 
 ---
 
-## 📑 Documentação Técnica
+##  Documentação Técnica
 
 Para detalhes completos sobre:
 - Decisões de modelagem DDD (Agregados, Entidades e Value Objects)
