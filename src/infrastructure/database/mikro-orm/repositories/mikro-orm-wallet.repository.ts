@@ -9,7 +9,7 @@ export class MikroOrmWalletRepository implements IWalletRepository {
   constructor(private readonly em: EntityManager) {}
 
   async findById(id: string): Promise<Wallet | null> {
-    const entity = await this.em.findOne(WalletOrmEntity, { id });
+    const entity = await this.em.fork().findOne(WalletOrmEntity, { id });
     if (!entity) return null;
 
     return Wallet.rehydrate({
@@ -24,7 +24,7 @@ export class MikroOrmWalletRepository implements IWalletRepository {
   }
 
   async findByPlayerIdAndCurrency(playerId: string, currency: string): Promise<Wallet | null> {
-    const entity = await this.em.findOne(WalletOrmEntity, { playerId, currency });
+    const entity = await this.em.fork().findOne(WalletOrmEntity, { playerId, currency });
     if (!entity) return null;
 
     return Wallet.rehydrate({

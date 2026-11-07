@@ -28,12 +28,12 @@ import { MikroOrmLedgerRepository } from '../../database/mikro-orm/repositories/
       useExisting: MikroOrmLedgerRepository,
     },
     {
-      provide: 'CreateWalletUseCase',
+      provide: CreateWalletUseCase,
       useFactory: (walletRepo: MikroOrmWalletRepository, ledgerRepo: MikroOrmLedgerRepository) =>
         new CreateWalletUseCase(walletRepo, ledgerRepo),
       inject: [MikroOrmWalletRepository, MikroOrmLedgerRepository],
     },
   ],
-  exports: [WALLET_REPOSITORY_TOKEN, LEDGER_REPOSITORY_TOKEN, 'CreateWalletUseCase'],
+  exports: [WALLET_REPOSITORY_TOKEN, LEDGER_REPOSITORY_TOKEN, CreateWalletUseCase, ReconcileWalletUseCase],
 })
 export class WalletModule {}

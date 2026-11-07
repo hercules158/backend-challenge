@@ -42,9 +42,6 @@ export class SqsConsumerService implements OnModuleInit, OnModuleDestroy {
   async stopPolling() {
     this.logger.log('Stopping SQS Consumer...');
     this.shouldStop = true;
-    if (this.activeProcessingPromise) {
-      await this.activeProcessingPromise;
-    }
     this.isRunning = false;
     this.logger.log('SQS Consumer stopped gracefully.');
   }
@@ -102,6 +99,13 @@ export class SqsConsumerService implements OnModuleInit, OnModuleDestroy {
     // Se for mensagem envelope do tipo WagerTransactionRequested (README seção 10)
     const wagerData = parsedBody.data || parsedBody;
     const messageId = parsedBody.messageId || message.MessageId || 'unknown-msg-id';
+
+    // Se não for mensagem de requisição de aposta (ex: evento ou formato desconhecido), ignora e faz ack
+    if (!wagerData || (!wagerData.walletId && !parsedBody.walletId)) {
+      this.logger.debug(`Ignoring non-wager message ${messageId}. Acknowledging.`);
+      await this.sqsService.deleteMessage(message.ReceiptHandle);
+      return;
+    }
 
     // 1. Verificação prévia de Inbox (Deduplicação persistente)
     const isAlreadyProcessed = await this.checkInbox(messageId);

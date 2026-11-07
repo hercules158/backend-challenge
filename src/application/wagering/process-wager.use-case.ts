@@ -139,6 +139,33 @@ export class ProcessWagerUseCase {
 
     // 2. Transação SQL Atômica: Wallet + Transação + Ledger + Outbox (+ Inbox se mensagem SQS)
     return await this.em.fork().transactional(async (em) => {
+      // 2a. Busca a wallet com LockMode.PESSIMISTIC_WRITE (SELECT ... FOR UPDATE)
+      // Como a wallet é a unidade de concorrência, o lock nela serializa qualquer aposta simultânea na mesma wallet
+      const walletOrm = await em.findOne(
+        WalletOrmEntity,
+        { id: input.walletId },
+        { lockMode: LockMode.PESSIMISTIC_WRITE },
+      );
+
+      if (!walletOrm) {
+        throw new WalletNotFoundError(input.walletId);
+      }
+
+      // 2b. Re-valida idempotência sob o lock exclusivo da wallet
+      const existingInTx = await em.findOne(WagerTransactionOrmEntity, { idempotencyKey: input.idempotencyKey });
+      if (existingInTx) {
+        if (existingInTx.payloadHash !== payloadHash) {
+          throw new IdempotencyConflictError(input.idempotencyKey);
+        }
+        return {
+          transactionId: existingInTx.id,
+          status: existingInTx.status,
+          balance: { amount: walletOrm.balanceAmount, currency: walletOrm.currency },
+          idempotentReplay: true,
+          failureCode: existingInTx.failureCode,
+        };
+      }
+
       // Se veio via consumidor de mensageria, registra a mensagem no Inbox
       if (input.inboxMessageId && input.consumerName) {
         const inboxEntity = em.create(InboxMessageOrmEntity, {
@@ -150,16 +177,6 @@ export class ProcessWagerUseCase {
           processedAt: new Date(),
         });
         em.persist(inboxEntity);
-      }
-      // Busca a wallet com LockMode.PESSIMISTIC_WRITE (SELECT ... FOR UPDATE)
-      const walletOrm = await em.findOne(
-        WalletOrmEntity,
-        { id: input.walletId },
-        { lockMode: LockMode.PESSIMISTIC_WRITE },
-      );
-
-      if (!walletOrm) {
-        throw new WalletNotFoundError(input.walletId);
       }
 
       const wallet = Wallet.rehydrate({

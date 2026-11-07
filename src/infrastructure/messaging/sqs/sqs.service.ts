@@ -15,6 +15,7 @@ export class SqsService {
   private readonly sqsClient: SQSClient;
   public readonly wagerQueueUrl: string;
   public readonly dlqUrl: string;
+  public readonly eventsQueueUrl: string;
 
   constructor() {
     const endpoint = process.env.AWS_ENDPOINT || 'http://localhost:4566';
@@ -36,6 +37,10 @@ export class SqsService {
     this.dlqUrl =
       process.env.SQS_DLQ_URL ||
       'http://localhost:4566/000000000000/wager-transactions-dlq.fifo';
+
+    this.eventsQueueUrl =
+      process.env.SQS_EVENTS_QUEUE_URL ||
+      'http://localhost:4566/000000000000/wager-events.fifo';
   }
 
   getClient(): SQSClient {

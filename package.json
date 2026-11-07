@@ -15,6 +15,8 @@
     "start:dev": "bun --watch src/main.ts",
     "start:prod": "bun dist/main.js",
     "test": "bun test",
+    "test:concurrency": "bun test ./test/e2e/concurrency.e2e-spec.ts",
+    "test:e2e": "bun test ./test/e2e/sqs-localstack.e2e-spec.ts ./test/e2e/concurrency.e2e-spec.ts",
     "test:watch": "bun test --watch",
     "test:coverage": "bun test --coverage"
   },

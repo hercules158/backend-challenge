@@ -10,13 +10,13 @@ export class MikroOrmWagerTransactionRepository implements IWagerTransactionRepo
   constructor(private readonly em: EntityManager) {}
 
   async findById(id: string): Promise<WagerTransaction | null> {
-    const entity = await this.em.findOne(WagerTransactionOrmEntity, { id });
+    const entity = await this.em.fork().findOne(WagerTransactionOrmEntity, { id });
     if (!entity) return null;
     return this.toDomain(entity);
   }
 
   async findByIdempotencyKey(idempotencyKey: string): Promise<WagerTransaction | null> {
-    const entity = await this.em.findOne(WagerTransactionOrmEntity, { idempotencyKey });
+    const entity = await this.em.fork().findOne(WagerTransactionOrmEntity, { idempotencyKey });
     if (!entity) return null;
     return this.toDomain(entity);
   }
@@ -25,7 +25,7 @@ export class MikroOrmWagerTransactionRepository implements IWagerTransactionRepo
     providerId: string,
     externalTransactionId: string,
   ): Promise<WagerTransaction | null> {
-    const entity = await this.em.findOne(WagerTransactionOrmEntity, {
+    const entity = await this.em.fork().findOne(WagerTransactionOrmEntity, {
       providerId,
       externalTransactionId,
     });

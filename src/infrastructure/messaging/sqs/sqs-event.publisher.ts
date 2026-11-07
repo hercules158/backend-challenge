@@ -24,6 +24,7 @@ export class SqsEventPublisher implements IEventPublisher {
     });
 
     await this.sqsService.sendMessage({
+      queueUrl: this.sqsService.eventsQueueUrl,
       messageBody: body,
       messageGroupId: walletId,
       messageDeduplicationId: eventId,

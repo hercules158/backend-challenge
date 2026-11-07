@@ -51,10 +51,27 @@ export class OutboxWorker implements OnModuleInit, OnModuleDestroy {
     this.isRunning = true;
 
     try {
-      return await this.em.fork().transactional(async (forkEm) => {
-        // Query com SKIP LOCKED para concorrência entre réplicas
-        const knex = forkEm.getKnex();
-        const rows = await knex('outbox_messages')
+      const forkEm = this.em.fork();
+      const knex = forkEm.getKnex();
+
+      // 1. Verificação prévia sem abrir transação desnecessária
+      const pendingCount = await knex('outbox_messages')
+        .whereNull('published_at')
+        .andWhere(function () {
+          this.whereNull('next_attempt_at').orWhere('next_attempt_at', '<=', new Date());
+        })
+        .count('id as count')
+        .first();
+
+      const total = Number(pendingCount?.count ?? 0);
+      if (total === 0) {
+        return 0;
+      }
+
+      // 2. Só abre transação quando de fato houver mensagens pendentes
+      return await forkEm.transactional(async (txEm) => {
+        const txKnex = txEm.getKnex();
+        const rows = await txKnex('outbox_messages')
           .whereNull('published_at')
           .andWhere(function () {
             this.whereNull('next_attempt_at').orWhere('next_attempt_at', '<=', new Date());
@@ -83,7 +100,6 @@ export class OutboxWorker implements OnModuleInit, OnModuleDestroy {
           });
 
           try {
-            // Se tiver publisher conectado (SQS no passo 3), publica:
             if (this.publisher) {
               await this.publisher.publish(outbox.eventType, outbox.payload as Record<string, unknown>);
             } else {
@@ -92,7 +108,7 @@ export class OutboxWorker implements OnModuleInit, OnModuleDestroy {
 
             outbox.markPublished(now);
 
-            await forkEm.getKnex()('outbox_messages')
+            await txKnex('outbox_messages')
               .where({ id: outbox.id })
               .update({
                 published_at: outbox.publishedAt,
@@ -104,7 +120,7 @@ export class OutboxWorker implements OnModuleInit, OnModuleDestroy {
             );
             outbox.scheduleRetry(now);
 
-            await forkEm.getKnex()('outbox_messages')
+            await txKnex('outbox_messages')
               .where({ id: outbox.id })
               .update({
                 attempts: outbox.attempts,

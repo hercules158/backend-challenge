@@ -30,7 +30,6 @@ export class CreateWalletDto {
 @Controller('wallets')
 export class WalletController {
   constructor(
-    @Inject('CreateWalletUseCase')
     private readonly createWalletUseCase: CreateWalletUseCase,
     @Inject(WALLET_REPOSITORY_TOKEN)
     private readonly walletRepository: IWalletRepository,
